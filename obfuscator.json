@@ -1,0 +1,23 @@
+{
+  "compact": true,
+  "simplify": true,
+  "optionsPreset": "high-obfuscation",
+  "target": "browser-no-eval",
+  "ignoreImports": true,
+  "stringArray": true,
+  "stringArrayEncoding": ["rc4", "base64"],
+  "stringArrayThreshold": 1.0,
+  "stringArrayRotate": true,
+  "stringArrayIndexShift": true,
+  "splitStrings": true,
+  "splitStringsChunkLength": 5,
+  "unicodeEscapeSequence": true,
+  "identifierNamesGenerator": "mangled-shuffled",
+  "renameGlobals": true,
+  "renameProperties": false,
+  "renamePropertiesMode": "safe",
+  "transformObjectKeys": true,
+  "numbersToExpressions": true,
+  "deadCodeInjection": true,
+  "deadCodeInjectionThreshold": 0.5
+}
