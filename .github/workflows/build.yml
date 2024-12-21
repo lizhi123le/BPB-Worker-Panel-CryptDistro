@@ -63,13 +63,14 @@ jobs:
           # 将动态目录名称存入环境变量，供后续步骤使用
           echo "SOURCE_DIR=$SOURCE_DIR" >> $GITHUB_ENV
 
-      # Step 4: 安装必要依赖
+      # Step 3: 安装源代码的必要依赖
       - name: Install Dependencies
         if: env.has_update == 'true'
         working-directory: ${{ env.SOURCE_DIR }}
         run: |
           npm install
-      
+
+      # Step 4: 安装当前仓库的必要依赖
       - name: Install Dependencies
         if: env.has_update == 'true'
         working-directory: ${{ github.workspace }}
@@ -150,3 +151,25 @@ jobs:
             _worker.zip
           tag_name: "release-${{ env.LATEST_RELEASE }}"
           body: "This release includes the latest obfuscated and encrypted _worker.js. Release based on ${{ env.TARGET_REPO }} - version: ${{ env.LATEST_RELEASE }}"
+
+      # Step 12: 将解压后的源代码推送到指定分支, 用于备份
+      - name: Push Extracted Source Code
+        if: env.has_update == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LATEST_RELEASE: ${{ steps.check_update.outputs.LATEST_RELEASE }}
+          RANDOM_NUMBER: ${{ steps.obfuscate_js_code.outputs.RANDOM_NUMBER }}
+        run: |
+          # 克隆指定分支到本地
+          git clone --branch "${{ env.LATEST_RELEASE }}-${{ env.RANDOM_NUMBER }}" https://github.com/${{ github.repository }} repo
+          cd repo
+
+          # 复制解压后的源代码到仓库目录
+          cp -r ../${{ env.SOURCE_DIR }}/* .
+
+          # 提交并推送到指定分支
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "Backup latest source code from $TARGET_REPO: $LATEST_RELEASE($RANDOM_NUMBER)"
+          git push origin "${{ env.LATEST_RELEASE }}-${{ env.RANDOM_NUMBER }}"
