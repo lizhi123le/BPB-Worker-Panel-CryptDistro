@@ -25,11 +25,9 @@ jobs:
           LATEST_RELEASE=$(curl -s https://api.github.com/repos/$TARGET_REPO/releases/latest | jq -r '.name')
           echo "Latest release from $TARGET_REPO: $LATEST_RELEASE"
           echo "::set-output name=LATEST_RELEASE::$LATEST_RELEASE"
-
           # 检查当前仓库的最新 release
           CURRENT_RELEASE=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.name')
           echo "Current release in this repo: $CURRENT_RELEASE"
-
           # 判断是否需要更新
           if [ "$LATEST_RELEASE" = "null" ]; then
             echo "Error: No releases found in $TARGET_REPO"
@@ -55,11 +53,9 @@ jobs:
           # 解压 ZIP 文件到当前目录
           unzip -o latest_source.zip -d latest_source
           echo "Source code extracted to: latest_source/"
-
           # 获取解压后的目录名称（动态获取第一层子目录名）
           SOURCE_DIR=$(find latest_source -mindepth 1 -maxdepth 1 -type d)
           echo "Extracted source directory: $SOURCE_DIR"
-
           # 将动态目录名称存入环境变量，供后续步骤使用
           echo "SOURCE_DIR=$SOURCE_DIR" >> $GITHUB_ENV
 
@@ -102,7 +98,6 @@ jobs:
             --output dist/worker.obfuscated.js \
             --seed $RANDOM_NUMBER \
             --config obfuscator.json
-            
 
       # Step 7: 添加运行时加密
       # - name: Add Runtime Encryption
@@ -144,12 +139,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LATEST_RELEASE: ${{ steps.check_update.outputs.LATEST_RELEASE }}
+          RANDOM_NUMBER: ${{ steps.obfuscate_js_code.outputs.RANDOM_NUMBER }}
         with:
           name: "${{ env.LATEST_RELEASE }}"
           files: |
             _worker.js
             _worker.zip
-          tag_name: "release-${{ env.LATEST_RELEASE }}"
+          tag_name: "release-${{ env.LATEST_RELEASE }}(${{ env.RANDOM_NUMBER }})"
           body: "This release includes the latest obfuscated and encrypted _worker.js. Release based on ${{ env.TARGET_REPO }} - version: ${{ env.LATEST_RELEASE }}"
 
       # Step 12: 将解压后的源代码推送到指定分支, 用于备份
@@ -160,13 +156,19 @@ jobs:
           LATEST_RELEASE: ${{ steps.check_update.outputs.LATEST_RELEASE }}
           RANDOM_NUMBER: ${{ steps.obfuscate_js_code.outputs.RANDOM_NUMBER }}
         run: |
-          # 克隆指定分支到本地
-          git clone --branch "${{ env.LATEST_RELEASE }}-${{ env.RANDOM_NUMBER }}" https://github.com/${{ github.repository }} repo
+          # 克隆仓库到本地
+          git clone https://github.com/${{ github.repository }} repo
           cd repo
-
+      
+          # 创建并切换到指定分支
+          git checkout -b "${{ env.LATEST_RELEASE }}-${{ env.RANDOM_NUMBER }}"
+      
+          # 清理本仓库的代码
+          rm -rf ./*
+      
           # 复制解压后的源代码到仓库目录
           cp -r ../${{ env.SOURCE_DIR }}/* .
-
+      
           # 提交并推送到指定分支
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
