@@ -44,7 +44,7 @@ jobs:
 
       # Step 2: 下载目标仓库最新的 Source code 并解压
       - name: Download and Extract Latest Source Code
-        if: env.has_update == 'true'
+        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         run: |
           # 下载最新 release 的 Source code ZIP 文件
           LATEST_RELEASE_ZIP_URL=$(curl -s https://api.github.com/repos/$TARGET_REPO/releases/latest | jq -r '.zipball_url')
@@ -65,21 +65,21 @@ jobs:
 
       # Step 3: 安装源代码的必要依赖
       - name: Install Dependencies
-        if: env.has_update == 'true'
+        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         working-directory: ${{ env.SOURCE_DIR }}
         run: |
           npm install
 
       # Step 4: 安装当前仓库的必要依赖
       - name: Install Dependencies
-        if: env.has_update == 'true'
+        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         working-directory: ${{ github.workspace }}
         run: |
           npm install
 
       # Step 5: 拉取代码并部署（仅在有更新时执行）
       - name: Build and Deploy
-        if: env.has_update == 'true'
+        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         run: |
           npx wrangler deploy ${{ env.SOURCE_DIR }}/src/worker.js \
             --name bpb-worker-panel \
@@ -94,7 +94,7 @@ jobs:
       # --disable-console-output true \
       - name: Obfuscate JavaScript Code
         id: obfuscate_js_code
-        if: env.has_update == 'true'
+        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         run: |
           RANDOM_NUMBER=$(od -An -N8 -tu8 < /dev/urandom | awk '{print $1}')
           echo "::set-output name=RANDOM_NUMBER::$RANDOM_NUMBER"
@@ -106,19 +106,19 @@ jobs:
 
       # Step 7: 添加运行时加密
       # - name: Add Runtime Encryption
-      #   if: env.has_update == 'true'
+      #   if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
       #   run: |
       #     echo "(function(){const decodedCode=atob(\`$(base64 dist/worker.obfuscated.js)\`);eval(decodedCode)})();" > dist/worker.encrypted.js
 
       # Step 8: 复制文件并替换 _worker.js
       - name: Replace _worker.js
-        if: env.has_update == 'true'
+        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         run: |
           cp dist/worker.obfuscated.js _worker.js
 
       # Step 9: 提交 _worker.js 到仓库
       - name: Commit and Push Changes
-        if: env.has_update == 'true'
+        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LATEST_RELEASE: ${{ steps.check_update.outputs.LATEST_RELEASE }}
@@ -133,13 +133,13 @@ jobs:
 
       # Step 10: 压缩_worker.js为_worker.zip
       - name: Compress _worker.js
-        if: env.has_update == 'true'
+        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         run: |
           zip -j _worker.zip _worker.js
 
       # Step 11: 创建并发布新的 GitHub Release
       - name: Create Release and Upload _worker.js
-        if: env.has_update == 'true'
+        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -154,7 +154,7 @@ jobs:
 
       # Step 12: 将解压后的源代码推送到指定分支, 用于备份
       - name: Push Extracted Source Code
-        if: env.has_update == 'true'
+        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LATEST_RELEASE: ${{ steps.check_update.outputs.LATEST_RELEASE }}
