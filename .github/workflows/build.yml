@@ -169,9 +169,14 @@ jobs:
           # 复制解压后的源代码到仓库目录
           cp -r ../${{ env.SOURCE_DIR }}/* .
       
-          # 提交并推送到指定分支
+          # 配置 Git 用户信息
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
+      
+          # 提交更改
           git add .
           git commit -m "Backup latest source code from $TARGET_REPO: $LATEST_RELEASE($RANDOM_NUMBER)"
+      
+          # 推送到指定分支
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
           git push origin "${{ env.LATEST_RELEASE }}-${{ env.RANDOM_NUMBER }}"
