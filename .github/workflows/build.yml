@@ -164,6 +164,10 @@ jobs:
           
           # 初始化一个新的Git仓库
           git init
+
+          # 配置 Git 用户信息
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
           # 创建并切换到指定分支
           BRANCH_NAME="${{ env.LATEST_RELEASE }}-${{ env.RANDOM_NUMBER }}"
@@ -174,11 +178,7 @@ jobs:
           SOURCE_DIR=$(find ../latest_source_temp -mindepth 1 -maxdepth 1 -type d)
 
           # 复制解压后的源代码到仓库目录
-          cp -r ../$SOURCE_DIR/* .
-
-          # 配置 Git 用户信息
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          cp -r $SOURCE_DIR/* .
 
           # 添加远程仓库
           git remote add origin https://x-access-token:${{ env.GITHUB_TOKEN }}@github.com/${{ github.repository }}
