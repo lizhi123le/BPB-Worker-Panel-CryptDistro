@@ -157,15 +157,15 @@ jobs:
           RANDOM_NUMBER: ${{ steps.obfuscate_js_code.outputs.RANDOM_NUMBER }}
         run: |
           # 克隆仓库到本地
-          git clone https://github.com/${{ github.repository }} repo
+          git clone https://github.com/${{  github.repository }} repo
           cd repo
       
           # 创建并切换到指定分支
-          git checkout -b "${{ env.LATEST_RELEASE }}-${{ env.RANDOM_NUMBER }}"
+          git checkout -b "${{ env.LATEST_RELEASE }}-${{ env.RANDOM_NUMBER }}" || git checkout "${{ env.LATEST_RELEASE }}-${{ env.RANDOM_NUMBER }}"
       
           # 清理本仓库的代码，包括隐藏文件和目录
-          rm -rf ./*
-          rm -rf ./.*
+          find . -type d -name '.git' -prune -o -type f -delete
+          find . -type d -name '.git' -prune -o -type d -exec rm -rf {} +
       
           # 复制解压后的源代码到仓库目录
           cp -r ../${{ env.SOURCE_DIR }}/* .
@@ -178,6 +178,8 @@ jobs:
           git add .
           git commit -m "Backup latest source code from $TARGET_REPO: $LATEST_RELEASE($RANDOM_NUMBER)"
       
-          # 推送到指定分支
+          # 设置远程仓库 URL，使用 GITHUB_TOKEN 进行身份验证
           git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
+      
+          # 推送到指定分支
           git push origin "${{ env.LATEST_RELEASE }}-${{ env.RANDOM_NUMBER }}"
