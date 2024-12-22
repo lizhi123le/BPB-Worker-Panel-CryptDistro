@@ -174,7 +174,7 @@ jobs:
           SOURCE_DIR=$(find ../latest_source_temp -mindepth 1 -maxdepth 1 -type d)
 
           # 复制解压后的源代码到仓库目录
-          cp -r ../$SOURCE_DIR /* .
+          cp -r ../$SOURCE_DIR/* .
 
           # 配置 Git 用户信息
           git config --global user.name "github-actions[bot]"
