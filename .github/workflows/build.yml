@@ -163,8 +163,9 @@ jobs:
           # 创建并切换到指定分支
           git checkout -b "${{ env.LATEST_RELEASE }}-${{ env.RANDOM_NUMBER }}"
       
-          # 清理本仓库的代码
+          # 清理本仓库的代码，包括隐藏文件和目录
           rm -rf ./*
+          rm -rf ./.*
       
           # 复制解压后的源代码到仓库目录
           cp -r ../${{ env.SOURCE_DIR }}/* .
