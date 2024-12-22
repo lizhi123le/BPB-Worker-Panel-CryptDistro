@@ -53,9 +53,11 @@ jobs:
           # 解压 ZIP 文件到当前目录
           unzip -o latest_source.zip -d latest_source
           echo "Source code extracted to: latest_source/"
+
           # 获取解压后的目录名称（动态获取第一层子目录名）
           SOURCE_DIR=$(find latest_source -mindepth 1 -maxdepth 1 -type d)
           echo "Extracted source directory: $SOURCE_DIR"
+
           # 将动态目录名称存入环境变量，供后续步骤使用
           echo "SOURCE_DIR=$SOURCE_DIR" >> $GITHUB_ENV
 
@@ -156,30 +158,34 @@ jobs:
           LATEST_RELEASE: ${{ steps.check_update.outputs.LATEST_RELEASE }}
           RANDOM_NUMBER: ${{ steps.obfuscate_js_code.outputs.RANDOM_NUMBER }}
         run: |
-          # 克隆仓库到本地
-          git clone https://github.com/${{  github.repository }} repo
-          cd repo
-      
+          # 创建一个新文件夹
+          mkdir new_repo
+          cd new_repo
+          
+          # 初始化一个新的Git仓库
+          git init
+          
           # 创建并切换到指定分支
-          git checkout -b "${{ env.LATEST_RELEASE }}-${{ env.RANDOM_NUMBER }}" || git checkout "${{ env.LATEST_RELEASE }}-${{ env.RANDOM_NUMBER }}"
-      
-          # 清理本仓库的代码，包括隐藏文件和目录
-          find . -type d -name '.git' -prune -o -type f -delete
-          find . -type d -name '.git' -prune -o -type d -exec rm -rf {} +
-      
+          BRANCH_NAME="${{ env.LATEST_RELEASE }}-${{ env.RANDOM_NUMBER }}"
+          git checkout -b "$BRANCH_NAME"
+
+          # 复制下载的latest_source.zip，并解压到临时文件夹
+          unzip ../latest_source.zip -d ../latest_source_temp
+          SOURCE_DIR=$(find ../latest_source_temp -mindepth 1 -maxdepth 1 -type d)
+
           # 复制解压后的源代码到仓库目录
-          cp -r ../${{ env.SOURCE_DIR }}/* .
-      
+          cp -r ../$SOURCE_DIR /* .
+
           # 配置 Git 用户信息
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-      
+
+          # 添加远程仓库
+          git remote add origin https://x-access-token:${{ env.GITHUB_TOKEN }}@github.com/${{ github.repository }}
+
           # 提交更改
           git add .
           git commit -m "Backup latest source code from $TARGET_REPO: $LATEST_RELEASE($RANDOM_NUMBER)"
       
-          # 设置远程仓库 URL，使用 GITHUB_TOKEN 进行身份验证
-          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
-      
           # 推送到指定分支
-          git push origin "${{ env.LATEST_RELEASE }}-${{ env.RANDOM_NUMBER }}"
+          git push -u origin "$BRANCH_NAME"
