@@ -22,7 +22,7 @@ jobs:
         run: |
           set -e
           # 获取目标仓库最新的 commit id
-          LATEST_COMMIT_ID=$(curl -s https://api.github.com/repos/$TARGET_REPO/commits/main | jq -r '.[0].sha')
+          LATEST_COMMIT_ID=$(curl -s https://api.github.com/repos/$TARGET_REPO/commits/main | jq -r '.sha')
           NIGHTLY_BRANCH="night-${LATEST_COMMIT_ID}"
           echo "Latest commit ID from $TARGET_REPO: $LATEST_COMMIT_ID"
           echo "::set-output name=LATEST_COMMIT_ID::$LATEST_COMMIT_ID"
