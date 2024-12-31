@@ -25,9 +25,11 @@ jobs:
           LATEST_RELEASE=$(curl -s https://api.github.com/repos/$TARGET_REPO/releases/latest | jq -r '.name')
           echo "Latest release from $TARGET_REPO: $LATEST_RELEASE"
           echo "::set-output name=LATEST_RELEASE::$LATEST_RELEASE"
+
           # 检查当前仓库的最新 release
           CURRENT_RELEASE=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.name')
           echo "Current release in this repo: $CURRENT_RELEASE"
+          
           # 判断是否需要更新
           if [ "$LATEST_RELEASE" = "null" ]; then
             echo "Error: No releases found in $TARGET_REPO"

@@ -1,0 +1,133 @@
+name: Nightly Build and Deploy
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # 每天定时运行
+  workflow_dispatch: # 手动触发
+
+env:
+  TARGET_REPO: bia-pain-bache/BPB-Worker-Panel
+
+jobs:
+  nightly-build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Step 1: 获取目标仓库最新的 commit id 并检查当前仓库是否存在night-<commit id>分支
+      - name: Check for Nightly Branch
+        id: check_nightly_branch
+        run: |
+          set -e
+          # 获取目标仓库最新的 commit id
+          LATEST_COMMIT_ID=$(curl -s https://api.github.com/repos/$TARGET_REPO/commits/main | jq -r '.[0].sha')
+          NIGHTLY_BRANCH="night-${LATEST_COMMIT_ID}"
+          echo "Latest commit ID from $TARGET_REPO: $LATEST_COMMIT_ID"
+          echo "::set-output name=LATEST_COMMIT_ID::$LATEST_COMMIT_ID"
+          echo "::set-output name=NIGHTLY_BRANCH::$NIGHTLY_BRANCH"
+
+          # 检查是否存在night-<commit id>分支
+          BRANCH_EXISTS=$(git ls-remote --heads https://github.com/${{ github.repository }}.git | grep refs/heads/$NIGHTLY_BRANCH || echo "false")
+          if [ "$BRANCH_EXISTS" != "false" ]; then
+            echo "Nightly branch $NIGHTLY_BRANCH already exists."
+            echo "has_update=false" >> $GITHUB_ENV
+          else
+            echo "Nightly branch $NIGHTLY_BRANCH does not exist."
+            echo "has_update=true" >> $GITHUB_ENV
+          fi
+
+      # Step 2: 获取目标仓库的源代码
+      - name: Download and Extract Latest Source Code
+        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
+        run: |
+          git clone https://github.com/$TARGET_REPO repos
+
+          # 将动态目录名称存入环境变量，供后续步骤使用
+          echo "SOURCE_DIR=repos" >> $GITHUB_ENV
+
+      # Step 3: 安装源代码的必要依赖
+      - name: Install Dependencies for Source Code
+        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
+        working-directory: ${{ env.SOURCE_DIR }}
+        run: |
+          npm install
+
+      # Step 4: 安装当前仓库的必要依赖
+      - name: Install Dependencies for Current Repo
+        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
+        working-directory: ${{ github.workspace }}
+        run: |
+          npm install
+
+      # Step 5: 拉取代码并部署
+      - name: Build and Deploy
+        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
+        run: |
+          npx wrangler deploy ${{ env.SOURCE_DIR }}/src/worker.js \
+            --name bpb-worker-panel \
+            --compatibility-flag [nodejs_compat] \
+            --compatibility-date 2024-10-26 \
+            --dry-run \
+            --outdir=dist
+
+      # Step 6: 混淆代码
+      - name: Obfuscate JavaScript Code
+        id: obfuscate_js_code
+        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
+        run: |
+          RANDOM_NUMBER=$(od -An -N8 -tu8 < /dev/urandom | awk '{print $1}')
+          echo "::set-output name=RANDOM_NUMBER::$RANDOM_NUMBER"
+          npx javascript-obfuscator dist/worker.js \
+            --output dist/worker.obfuscated.js \
+            --seed $RANDOM_NUMBER \
+            --config obfuscator.json
+
+      # Step 7: 复制文件并替换 _worker.js
+      - name: Replace _worker.js
+        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
+        run: |
+          cp dist/worker.obfuscated.js _worker.js
+
+      # Step 8: 提交 _worker.js 到仓库其他分支
+      - name: Commit and Push to Nightly Branch
+        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NIGHTLY_BRANCH: ${{ steps.check_nightly_branch.outputs.NIGHTLY_BRANCH }}
+          RANDOM_NUMBER: ${{ steps.obfuscate_js_code.outputs.RANDOM_NUMBER }}
+        working-directory: ${{ github.workspace }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b $NIGHTLY_BRANCH
+          git add _worker.js
+          git commit -m "Update _worker.js with the latest obfuscated version: $RANDOM_NUMBER"
+          git push origin $NIGHTLY_BRANCH
+
+      # Step 9: 压缩_worker.js为_worker.zip
+      - name: Compress _worker.js
+        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
+        run: |
+          zip -j _worker.zip _worker.js
+
+      # Step 10: 创建并发布新的 GitHub Release
+      - name: Create Pre-release and Upload _worker.js
+        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NIGHTLY_BRANCH: ${{ steps.check_nightly_branch.outputs.NIGHTLY_BRANCH }}
+          RANDOM_NUMBER: ${{ steps.obfuscate_js_code.outputs.RANDOM_NUMBER }}
+          LATEST_COMMIT_ID: ${{ steps.check_nightly_branch.outputs.LATEST_COMMIT_ID }}
+        with:
+          name: "nightly-${{ env.RANDOM_NUMBER }}"
+          files: |
+            _worker.js
+            _worker.zip
+          tag_name: "${{ env.NIGHTLY_BRANCH }}"
+          prerelease: true
+          body: |
+            This pre-release includes the latest obfuscated _worker.js.
+            Generated from commit ID: [${{ env.LATEST_COMMIT_ID }}](https://github.com/${{ env.TARGET_REPO }}/commit/${{ env.LATEST_COMMIT_ID }})
