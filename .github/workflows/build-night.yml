@@ -81,18 +81,8 @@ jobs:
           echo "::set-output name=RANDOM_NUMBER::$RANDOM_NUMBER"
           npx javascript-obfuscator dist/worker.js \
             --output dist/worker.obfuscated.js \
-            --compact true \
-            --control-flow-flattening true \
-            --control-flow-flattening-threshold 1 \
-            --dead-code-injection true \
-            --dead-code-injection-threshold 1 \
-            --identifier-names-generator hexadecimal \
-            --rename-globals true \
-            --string-array true \
-            --string-array-encoding 'rc4' \
-            --string-array-threshold 1 \
-            --transform-object-keys true \
-            --unicode-escape-sequence true
+            --seed $RANDOM_NUMBER \
+            --config obfuscator.json
 
       # Step 7: 复制文件并替换 _worker.js
       - name: Replace _worker.js
