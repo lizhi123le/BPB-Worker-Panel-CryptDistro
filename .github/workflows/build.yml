@@ -35,10 +35,10 @@ jobs:
           echo "Current release in this repo: $CURRENT_RELEASE"
           
           # 判断是否需要更新
-          if [ "$LATEST_RELEASE" = "null" ]; then
+          if [ "$VERSION" = "null" ]; then
             echo "Error: No releases found in $TARGET_REPO"
             echo "has_update=true" >> $GITHUB_ENV
-          elif [ "$CURRENT_RELEASE" != "$LATEST_RELEASE" ]; then
+          elif [ "$CURRENT_RELEASE" != "$VERSION" ]; then
             echo "Releases are different, updating!"
             echo "has_update=true" >> $GITHUB_ENV
           else
