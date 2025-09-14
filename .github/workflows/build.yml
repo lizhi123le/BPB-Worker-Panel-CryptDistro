@@ -2,7 +2,7 @@ name: Check Updates and Deploy with Obfuscation
 
 on:
   schedule:
-    - cron: '0 0 * * *' # 每天定时运行
+    - cron: '0 */3 * * *' # 每天定时运行
   workflow_dispatch: # 手动触发
 
 env:
