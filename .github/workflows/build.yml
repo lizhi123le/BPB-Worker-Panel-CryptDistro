@@ -6,7 +6,7 @@ on:
   workflow_dispatch: # 手动触发
 
 env:
-  TARGET_REPO: bia-pain-bache/BPB-Worker-Panel
+  TARGET_REPO: lizhi123le/BPB-Worker-Panel
 
 jobs:
   check-and-deploy:
