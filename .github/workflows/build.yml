@@ -13,193 +13,261 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      # Step 1: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # Step 1: Check for updates in releases
+      # Step 2: Check for updates in releases
       - name: Check for Updates in Releases
         id: check_update
         run: |
-          set -e
+          set -euo pipefail
           # Get the latest release name and extract version number
-          LATEST_RELEASE=$(curl -s https://api.github.com/repos/$TARGET_REPO/releases/latest | jq -r '.name')
-          echo "Latest release from $TARGET_REPO: $LATEST_RELEASE"
-
+          LATEST_RELEASE=$(curl -fsSL "https://api.github.com/repos/${{ env.TARGET_REPO }}/releases/latest" | jq -r '.name')
+          echo "Latest release from ${{ env.TARGET_REPO }}: $LATEST_RELEASE"
           VERSION=$(echo "$LATEST_RELEASE" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "null")
           echo "Parsed version: $VERSION"
-
-          echo "LATEST_RELEASE=$VERSION" >> $GITHUB_ENV
+          echo "LATEST_RELEASE=$VERSION" >> "$GITHUB_ENV"
+          echo "LATEST_RELEASE=$VERSION" >> "$GITHUB_OUTPUT"
 
           # Check current repository's latest release
-          CURRENT_RELEASE=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.name' || echo "null")
+          CURRENT_RELEASE=$(curl -fsSL "https://api.github.com/repos/${{ github.repository }}/releases/latest" | jq -r '.name' || echo "null")
           echo "Current release in this repo: $CURRENT_RELEASE"
 
           # Determine if an update is needed
           if [ "$VERSION" = "null" ]; then
-            echo "Error: No releases found in $TARGET_REPO"
-            echo "has_update=true" >> $GITHUB_ENV
+            echo "Error: No releases found in ${{ env.TARGET_REPO }}"
+            echo "has_update=true" >> "$GITHUB_ENV"
           elif [ "$CURRENT_RELEASE" != "$VERSION" ]; then
             echo "Releases are different, updating!"
-            echo "has_update=true" >> $GITHUB_ENV
+            echo "has_update=true" >> "$GITHUB_ENV"
           else
             echo "Releases are the same, no update needed."
-            echo "has_update=false" >> $GITHUB_ENV
+            echo "has_update=false" >> "$GITHUB_ENV"
           fi
 
-      # Step 2: Download and extract latest source code
+      # Step 3: Download and extract latest source code
       - name: Download and Extract Latest Source Code
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         run: |
+          set -euo pipefail
           # Download latest release source code ZIP
-          LATEST_RELEASE_ZIP_URL=$(curl -s https://api.github.com/repos/$TARGET_REPO/releases/latest | jq -r '.zipball_url')
+          LATEST_RELEASE_ZIP_URL=$(curl -fsSL "https://api.github.com/repos/${{ env.TARGET_REPO }}/releases/latest" | jq -r '.zipball_url')
+          if [ -z "$LATEST_RELEASE_ZIP_URL" ] || [ "$LATEST_RELEASE_ZIP_URL" = "null" ]; then
+            echo "Error: Failed to get zipball URL from ${{ env.TARGET_REPO }}"
+            exit 1
+          fi
           echo "Downloading source code from: $LATEST_RELEASE_ZIP_URL"
-          
-          curl -L $LATEST_RELEASE_ZIP_URL -o latest_source.zip
-          
-          # Extract ZIP file
+          curl -L "$LATEST_RELEASE_ZIP_URL" -o latest_source.zip
           unzip -o latest_source.zip -d latest_source
           echo "Source code extracted to: latest_source/"
 
           # Get extracted directory name dynamically
           SOURCE_DIR=$(find latest_source -mindepth 1 -maxdepth 1 -type d)
           echo "Extracted source directory: $SOURCE_DIR"
+          echo "SOURCE_DIR=$SOURCE_DIR" >> "$GITHUB_ENV"
 
-          echo "SOURCE_DIR=$SOURCE_DIR" >> $GITHUB_ENV
-
-      # Step 3: Install source code dependencies
+      # Step 4: Install source code dependencies
       - name: Install Source Dependencies
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         working-directory: ${{ env.SOURCE_DIR }}
         run: |
-          npm install
+          set -euo pipefail
+          if [ -f package-lock.json ] || [ -f package.json ]; then
+            echo "Installing dependencies with npm ci..."
+            npm ci --prefer-offline --no-audit --progress=false || {
+              echo "npm ci failed, falling back to npm install..."
+              npm install
+            }
+          else
+            echo "No package.json in source directory, skipping dependency installation."
+          fi
 
-      # Step 4: Install repository dependencies
+      # Step 5: Install repository dependencies
       - name: Install Repository Dependencies
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         working-directory: ${{ github.workspace }}
         run: |
-          npm install
+          set -euo pipefail
+          if [ -f package-lock.json ] || [ -f package.json ]; then
+            echo "Installing dependencies with npm ci..."
+            npm ci --prefer-offline --no-audit --progress=false || {
+              echo "npm ci failed, falling back to npm install..."
+              npm install
+            }
+          else
+            echo "No package.json in repository, skipping dependency installation."
+          fi
 
-      # Step 5: Build and deploy (dry run)
-      - name: Build and Deploy
+      # Step 6: Build and deploy (dry run)
+      - name: Build Worker Script (Dry Run)
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         run: |
-          npx wrangler deploy ${{ env.SOURCE_DIR }}/src/worker.js \
+          set -euo pipefail
+          SOURCE_FILE="${{ env.SOURCE_DIR }}/src/worker.js"
+          if [ ! -f "$SOURCE_FILE" ]; then
+            echo "Error: Source worker file not found at $SOURCE_FILE"
+            exit 1
+          fi
+          npx --yes wrangler deploy "$SOURCE_FILE" \
             --name bpb-worker-panel \
             --compatibility-flag nodejs_compat \
             --compatibility-date 2024-10-26 \
             --dry-run \
             --outdir=dist
 
-      # Step 6: Obfuscate JavaScript code
-      - name: Obfuscate JavaScript Code
+      # Step 7: Obfuscate worker script
+      - name: Obfuscate Worker Script
         id: obfuscate_js_code
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         run: |
           set -euo pipefail
-          RANDOM_NUMBER=$(od -An -N8 -tu8 < /dev/urandom | awk '{print $1}')
-          echo "RANDOM_NUMBER=$RANDOM_NUMBER" >> $GITHUB_ENV
-          echo "RANDOM_NUMBER=$RANDOM_NUMBER" >> $GITHUB_OUTPUT
-          npx javascript-obfuscator dist/worker.js \
+          if [ ! -f dist/worker.js ]; then
+            echo "dist/worker.js not found. Attempting to use source file as fallback."
+            if [ -f "${{ env.SOURCE_DIR }}/src/worker.js" ]; then
+              mkdir -p dist
+              cp "${{ env.SOURCE_DIR }}/src/worker.js" dist/worker.js
+            else
+              echo "Error: No worker.js available to obfuscate."
+              exit 1
+            fi
+          fi
+          if [ ! -f obfuscator.json ]; then
+            echo "Error: obfuscator.json not found in repository root."
+            exit 1
+          fi
+          RANDOM_NUMBER=$(od -An -N8 -tu8 < /dev/urandom | tr -d ' ')
+          echo "RANDOM_NUMBER=$RANDOM_NUMBER" >> "$GITHUB_ENV"
+          echo "RANDOM_NUMBER=$RANDOM_NUMBER" >> "$GITHUB_OUTPUT"
+          npx --yes javascript-obfuscator dist/worker.js \
             --output dist/worker.obfuscated.js \
             --seed "$RANDOM_NUMBER" \
             --config obfuscator.json
-        shell: bash
 
-      # Step 7: Replace _worker.js
+      # Step 8: Replace _worker.js with obfuscated version
       - name: Replace _worker.js
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         run: |
+          set -euo pipefail
+          if [ ! -f dist/worker.obfuscated.js ]; then
+            echo "Error: dist/worker.obfuscated.js not found"
+            exit 1
+          fi
           cp dist/worker.obfuscated.js _worker.js
+          echo "_worker.js replaced with obfuscated version."
 
-      # Step 8: Check if release exists for the version
-      - name: Check if Release Exists
-        id: check_release
-        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
-        run: |
-          # Check if a release with the same version exists
-          RELEASE_EXISTS=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            https://api.github.com/repos/${{ github.repository }}/releases | \
-            jq -r --arg version "${{ env.LATEST_RELEASE }}" '.[] | select(.name == $version) | .id' || echo "none")
-          echo "Release exists: $RELEASE_EXISTS"
-          echo "release_id=$RELEASE_EXISTS" >> $GITHUB_ENV
-
-      # Step 9: Commit and push changes
-      - name: Commit and Push Changes
+      # Step 9: Commit and push _worker.js to main branch
+      - name: Commit and Push _worker.js to Main Branch
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        working-directory: ${{ github.workspace }}
+          RANDOM_NUMBER: ${{ steps.obfuscate_js_code.outputs.RANDOM_NUMBER }}
+          LATEST_RELEASE: ${{ env.LATEST_RELEASE }}
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add _worker.js
-          if [ "${{ env.release_id }}" != "none" ]; then
-            COMMIT_MESSAGE="Update _worker.js for existing release: ${{ env.LATEST_RELEASE }}(${{ env.RANDOM_NUMBER }})"
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add _worker.js || true
+          if git diff --cached --quiet; then
+            echo "No staged changes to commit."
           else
-            COMMIT_MESSAGE="Add _worker.js for new release: ${{ env.LATEST_RELEASE }}(${{ env.RANDOM_NUMBER }})"
+            git commit -m "Update _worker.js with obfuscated version: ${{ env.LATEST_RELEASE }} (${{ env.RANDOM_NUMBER }})"
           fi
-          git commit -m "$COMMIT_MESSAGE" || echo "No changes to commit"
           git push origin main
 
       # Step 10: Compress _worker.js to _worker.zip
-      - name: Compress _worker.js
+      - name: Compress _worker.js to ZIP
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         run: |
+          set -euo pipefail
+          if [ ! -f _worker.js ]; then
+            echo "Error: _worker.js not found"
+            exit 1
+          fi
           zip -j _worker.zip _worker.js
+          echo "_worker.js compressed to _worker.zip"
 
-      # Step 11: Delete existing release if it exists
+      # Step 11: Check for existing release
+      - name: Check for Existing Release
+        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
+        id: check_release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LATEST_RELEASE: ${{ env.LATEST_RELEASE }}
+        run: |
+          set -euo pipefail
+          # Ensure only one release is matched by selecting the first ID
+          RELEASE_ID=$(curl -s -H "Authorization: Bearer ${{ env.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/${{ github.repository }}/releases | \
+            jq -r --arg version "${{ env.LATEST_RELEASE }}" '.[] | select(.name == $version) | .id' | head -n 1 || echo "none")
+          echo "Release ID for version ${{ env.LATEST_RELEASE }}: $RELEASE_ID"
+          echo "release_id=$RELEASE_ID" >> "$GITHUB_ENV"
+          echo "release_id=$RELEASE_ID" >> "$GITHUB_OUTPUT"
+
+      # Step 12: Delete existing release if it exists
       - name: Delete Existing Release
         if: github.event_name == 'workflow_dispatch' || (env.has_update == 'true' && env.release_id != 'none')
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           echo "Deleting existing release with ID: ${{ env.release_id }}"
           curl -s -X DELETE \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Authorization: Bearer ${{ env.GITHUB_TOKEN }}" \
             https://api.github.com/repos/${{ github.repository }}/releases/${{ env.release_id }}
 
-      # Step 12: Delete existing tag if it exists
+      # Step 13: Delete existing tag if it exists
       - name: Delete Existing Tag
         if: github.event_name == 'workflow_dispatch' || (env.has_update == 'true' && env.release_id != 'none')
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LATEST_RELEASE: ${{ env.LATEST_RELEASE }}
+          RANDOM_NUMBER: ${{ steps.obfuscate_js_code.outputs.RANDOM_NUMBER }}
         run: |
-          TAG_NAME="release-${{ env.LATEST_RELEASE }}(${{ env.RANDOM_NUMBER }})"
+          set -euo pipefail
+          TAG_NAME="release-${{ env.LATEST_RELEASE }}-${{ env.RANDOM_NUMBER }}"
           echo "Deleting existing tag: $TAG_NAME"
-          git push origin --delete $TAG_NAME || echo "Tag does not exist, proceeding"
+          git push origin --delete "$TAG_NAME" || echo "Tag does not exist, proceeding."
 
-      # Step 13: Create or update release and upload assets
+      # Step 14: Create or update release and upload assets
       - name: Create or Update Release and Upload Assets
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LATEST_RELEASE: ${{ env.LATEST_RELEASE }}
+          RANDOM_NUMBER: ${{ steps.obfuscate_js_code.outputs.RANDOM_NUMBER }}
         with:
           name: "${{ env.LATEST_RELEASE }}"
           files: |
             _worker.js
             _worker.zip
-          tag_name: "release-${{ env.LATEST_RELEASE }}(${{ env.RANDOM_NUMBER }})"
-          body: "This release includes the latest obfuscated _worker.js. Based on ${{ env.TARGET_REPO }} - version: ${{ env.LATEST_RELEASE }}"
+          tag_name: "release-${{ env.LATEST_RELEASE }}-${{ env.RANDOM_NUMBER }}"
+          body: |
+            This release includes the latest obfuscated _worker.js.
+            Based on ${{ env.TARGET_REPO }} - version: ${{ env.LATEST_RELEASE }}
+            Obfuscation seed: ${{ env.RANDOM_NUMBER }}
 
-      # Step 14: Push extracted source code to a backup branch
-      - name: Push Extracted Source Code
+      # Step 15: Push extracted source code to backup branch
+      - name: Push Extracted Source Code to Backup Branch
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LATEST_RELEASE: ${{ env.LATEST_RELEASE }}
+          RANDOM_NUMBER: ${{ steps.obfuscate_js_code.outputs.RANDOM_NUMBER }}
         run: |
-          mkdir new_repo
-          cd new_repo
+          set -euo pipefail
+          mkdir backup_repo
+          cd backup_repo
           git init
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           BRANCH_NAME="${{ env.LATEST_RELEASE }}-${{ env.RANDOM_NUMBER }}"
           git checkout -b "$BRANCH_NAME"
-          unzip ../latest_source.zip -d ../latest_source_temp
-          SOURCE_DIR=$(find ../latest_source_temp -mindepth 1 -maxdepth 1 -type d)
-          cp -r $SOURCE_DIR/* .
-          git remote add origin https://x-access-token:${{ env.GITHUB_TOKEN }}@github.com/${{ github.repository }}
+          cp -r ${{ env.SOURCE_DIR }}/* .
+          git remote add origin "https://x-access-token:${{ env.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
           git add .
-          git commit -m "Backup source code from ${{ env.TARGET_REPO }}: ${{ env.LATEST_RELEASE }}(${{ env.RANDOM_NUMBER }})"
+          git commit -m "Backup source code from ${{ env.TARGET_REPO }}: ${{ env.LATEST_RELEASE }} (${{ env.RANDOM_NUMBER }})"
           git push -u origin "$BRANCH_NAME"
