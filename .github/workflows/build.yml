@@ -251,23 +251,33 @@ jobs:
             Obfuscation seed: ${{ env.RANDOM_NUMBER }}
 
       # Step 15: Push extracted source code to backup branch
-      - name: Push Extracted Source Code to Backup Branch
+      - name: Push Extracted Source Code
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          LATEST_RELEASE: ${{ env.LATEST_RELEASE }}
+          LATEST_RELEASE: ${{ steps.check_update.outputs.LATEST_RELEASE }}
           RANDOM_NUMBER: ${{ steps.obfuscate_js_code.outputs.RANDOM_NUMBER }}
         run: |
-          set -euo pipefail
-          mkdir backup_repo
-          cd backup_repo
+          # 创建一个新文件夹
+          mkdir new_repo
+          cd new_repo
+          
+          # 初始化一个新的Git仓库
           git init
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # 配置 Git 用户信息
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # 创建并切换到指定分支
           BRANCH_NAME="${{ env.LATEST_RELEASE }}-${{ env.RANDOM_NUMBER }}"
           git checkout -b "$BRANCH_NAME"
-          cp -r ${{ env.SOURCE_DIR }}/* .
-          git remote add origin "https://x-access-token:${{ env.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
+          # 复制下载的latest_source.zip，并解压到临时文件夹
+          unzip ../latest_source.zip -d ../latest_source_temp
+          SOURCE_DIR=$(find ../latest_source_temp -mindepth 1 -maxdepth 1 -type d)
+          # 复制解压后的源代码到仓库目录
+          cp -r $SOURCE_DIR/* .
+          # 添加远程仓库
+          git remote add origin https://x-access-token:${{ env.GITHUB_TOKEN }}@github.com/${{ github.repository }}
+          # 提交更改
           git add .
-          git commit -m "Backup source code from ${{ env.TARGET_REPO }}: ${{ env.LATEST_RELEASE }} (${{ env.RANDOM_NUMBER }})"
-          git push -u origin "$BRANCH_NAME"
+          git commit -m "Backup latest source code from $TARGET_REPO: $LATEST_RELEASE($RANDOM_NUMBER)"
