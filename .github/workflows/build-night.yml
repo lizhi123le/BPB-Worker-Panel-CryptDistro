@@ -2,8 +2,8 @@ name: Nightly Build and Deploy
 
 on:
   schedule:
-    - cron: '0 */3 * * *' # 每天定时运行
-  workflow_dispatch: # 手动触发
+    - cron: '0 */3 * * *' # run every 3 hours
+  workflow_dispatch: # manual trigger
 
 env:
   TARGET_REPO: lizhi123le/BPB-Worker-Panel
@@ -15,83 +15,128 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # Step 1: 获取目标仓库最新的 commit id 并检查当前仓库是否存在night-<commit id>分支
+      # Step 1: 获取目标仓库最新的 commit id 并检查当前仓库是否存在 night-<commit id> 分支
       - name: Check for Nightly Branch
         id: check_nightly_branch
+        shell: bash
         run: |
-          set -e
-          # 获取目标仓库最新的 commit id
-          LATEST_COMMIT_ID=$(curl -s https://api.github.com/repos/$TARGET_REPO/commits/main | jq -r '.sha')
-          NIGHTLY_BRANCH="night-${LATEST_COMMIT_ID}"
-          echo "Latest commit ID from $TARGET_REPO: $LATEST_COMMIT_ID"
-          echo "::set-output name=LATEST_COMMIT_ID::$LATEST_COMMIT_ID"
-          echo "::set-output name=NIGHTLY_BRANCH::$NIGHTLY_BRANCH"
+          set -euo pipefail
 
-          # 检查是否存在night-<commit id>分支
-          BRANCH_EXISTS=$(git ls-remote --heads https://github.com/${{ github.repository }}.git | grep refs/heads/$NIGHTLY_BRANCH || echo "false")
-          if [ "$BRANCH_EXISTS" != "false" ]; then
-            echo "Nightly branch $NIGHTLY_BRANCH already exists."
-            echo "has_update=false" >> $GITHUB_ENV
-          else
-            echo "Nightly branch $NIGHTLY_BRANCH does not exist."
-            echo "has_update=true" >> $GITHUB_ENV
+          # 获取目标仓库最新的 commit id（main 分支）
+          LATEST_COMMIT_ID=$(curl -fsSL "https://api.github.com/repos/$TARGET_REPO/commits/main" | jq -r '.sha')
+          if [ -z "$LATEST_COMMIT_ID" ] || [ "$LATEST_COMMIT_ID" = "null" ]; then
+            echo "Failed to get latest commit id from $TARGET_REPO"
+            exit 1
           fi
 
-      # Step 2: 获取目标仓库的源代码
+          NIGHTLY_BRANCH="night-${LATEST_COMMIT_ID}"
+          echo "Latest commit ID from $TARGET_REPO: $LATEST_COMMIT_ID"
+          echo "NIGHTLY_BRANCH=$NIGHTLY_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "LATEST_COMMIT_ID=$LATEST_COMMIT_ID" >> "$GITHUB_OUTPUT"
+
+          # 检查当前仓库是否已存在该分支
+          if git ls-remote --heads origin "$NIGHTLY_BRANCH" | grep -q "$NIGHTLY_BRANCH"; then
+            echo "Nightly branch $NIGHTLY_BRANCH already exists."
+            echo "has_update=false" >> "$GITHUB_ENV"
+          else
+            echo "Nightly branch $NIGHTLY_BRANCH does not exist."
+            echo "has_update=true" >> "$GITHUB_ENV"
+          fi
+
+      # Step 2: 获取目标仓库的源代码（仅在有更新或手动触发时）
       - name: Download and Extract Latest Source Code
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
+        id: download_source
         run: |
-          git clone https://github.com/$TARGET_REPO repos
+          set -euo pipefail
+          git clone --depth 1 "https://github.com/${TARGET_REPO}.git" repos
+          echo "SOURCE_DIR=repos" >> "$GITHUB_ENV"
 
-          # 将动态目录名称存入环境变量，供后续步骤使用
-          echo "SOURCE_DIR=repos" >> $GITHUB_ENV
-
-      # Step 3: 安装源代码的必要依赖
+      # Step 3: 安装目标仓库的依赖
       - name: Install Dependencies for Source Code
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         working-directory: ${{ env.SOURCE_DIR }}
         run: |
-          npm install
+          set -euo pipefail
+          if [ -f package-lock.json ] || [ -f package.json ]; then
+            npm ci --prefer-offline --no-audit --progress=false || npm install
+          else
+            echo "No package.json in source repo, skipping npm install."
+          fi
 
-      # Step 4: 安装当前仓库的必要依赖
+      # Step 4: 安装当前仓库的依赖（如果需要）
       - name: Install Dependencies for Current Repo
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         working-directory: ${{ github.workspace }}
         run: |
-          npm install
+          set -euo pipefail
+          if [ -f package-lock.json ] || [ -f package.json ]; then
+            npm ci --prefer-offline --no-audit --progress=false || npm install
+          else
+            echo "No package.json in current repo, skipping npm install."
+          fi
 
-      # Step 5: 拉取代码并部署
-      - name: Build and Deploy
+      # Step 5: 构建并部署（dry-run by default）
+      - name: Build and Deploy (dry-run)
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         run: |
-          npx wrangler deploy ${{ env.SOURCE_DIR }}/src/worker.js \
+          set -euo pipefail
+          # Ensure wrangler is available (uses npx)
+          SOURCE_FILE="${{ env.SOURCE_DIR }}/src/worker.js"
+          if [ ! -f "$SOURCE_FILE" ]; then
+            echo "Source worker file not found at $SOURCE_FILE"
+            exit 1
+          fi
+          npx --yes wrangler deploy "$SOURCE_FILE" \
             --name bpb-worker-panel \
-            --compatibility-flag [nodejs_compat] \
+            --compatibility-flag nodejs_compat \
             --compatibility-date 2024-10-26 \
             --dry-run \
             --outdir=dist
 
-      # Step 6: 混淆代码
+      # Step 6: 混淆代码（为保证 dist/worker.js 存在，使用 build output）
       - name: Obfuscate worker with random seed
+        id: obfuscate_js_code
         run: |
-         set -euo pipefail
-         RANDOM_NUMBER=$(od -An -N8 -tu8 < /dev/urandom | awk '{print $1}')
-         echo "RANDOM_NUMBER=${RANDOM_NUMBER}" >> "$GITHUB_ENV"
-         echo "RANDOM_NUMBER=${RANDOM_NUMBER}" >> "$GITHUB_OUTPUT"
-         npx javascript-obfuscator dist/worker.js \
-         --output dist/worker.obfuscated.js \
-         --seed "${RANDOM_NUMBER}" \
-         --config obfuscator.json
-        shell: bash
-      
-      # Step 7: 复制文件并替换 _worker.js
+          set -euo pipefail
+          if [ ! -f dist/worker.js ]; then
+            echo "dist/worker.js not found. Attempting to use source file as fallback."
+            if [ -f "${{ env.SOURCE_DIR }}/src/worker.js" ]; then
+              mkdir -p dist
+              cp "${{ env.SOURCE_DIR }}/src/worker.js" dist/worker.js
+            else
+              echo "No worker.js available to obfuscate."
+              exit 1
+            fi
+          fi
+
+          # 生成随机种子（64-bit unsigned）
+          RANDOM_NUMBER=$(od -An -N8 -tu8 < /dev/urandom | tr -d ' ')
+          echo "RANDOM_NUMBER=${RANDOM_NUMBER}" >> "$GITHUB_ENV"
+          echo "RANDOM_NUMBER=${RANDOM_NUMBER}" >> "$GITHUB_OUTPUT"
+
+          # 检查是否安装了 javascript-obfuscator（npx 会处理）
+          npx --yes javascript-obfuscator dist/worker.js \
+            --output dist/worker.obfuscated.js \
+            --seed "${RANDOM_NUMBER}" \
+            --config obfuscator.json
+
+      # Step 7: 复制并替换为 _worker.js
       - name: Replace _worker.js
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         run: |
+          set -euo pipefail
+          if [ ! -f dist/worker.obfuscated.js ]; then
+            echo "dist/worker.obfuscated.js not found"
+            exit 1
+          fi
           cp dist/worker.obfuscated.js _worker.js
+          echo "_worker.js prepared."
 
-      # Step 8: 提交 _worker.js 到仓库其他分支
+      # Step 8: 提交 _worker.js 到夜间分支并推送
       - name: Commit and Push to Nightly Branch
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         env:
@@ -101,49 +146,63 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-          # 分支名来自环境变量 NIGHTLY_BRANCH
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
           BRANCH="${NIGHTLY_BRANCH:?NIGHTLY_BRANCH not set}"
 
-          # 创建并切换到本地分支
-          git checkout -b "$BRANCH"
+          # Ensure we have origin remote
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
 
-          # 添加并提交变更（允许无变更的情况）
+          # Create and switch to branch
+          if git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
+            git checkout "$BRANCH"
+          else
+            git checkout -b "$BRANCH"
+          fi
+
+          # Add and commit (allow no changes)
           git add _worker.js || true
           if git diff --cached --quiet; then
-           echo "No staged changes to commit."
+            echo "No staged changes to commit."
           else
             git commit -m "Update _worker.js with the latest obfuscated version: ${RANDOM_NUMBER:-unknown}"
           fi
 
-          # 确保对远端进行 fetch
-          git fetch origin "$BRANCH"
+          # Fetch remote branch and attempt fast-forward or rebase
+          git fetch origin "$BRANCH" || true
 
-          # 如果可以 fast-forward（即远端包含本地的祖先），直接 push
-          if git merge-base --is-ancestor origin/"$BRANCH" HEAD; then
-           echo "Local branch is ahead of origin, pushing..."
-           git push origin HEAD:"$BRANCH"
+          if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
+            if git merge-base --is-ancestor origin/"$BRANCH" HEAD; then
+              echo "Local is ahead of origin, pushing..."
+              git push origin HEAD:"$BRANCH"
+            else
+              echo "Branches have diverged. Attempting to rebase onto origin/$BRANCH..."
+              if git rebase origin/"$BRANCH"; then
+                git push origin HEAD:"$BRANCH"
+              else
+                echo "Rebase failed. Please resolve conflicts manually."
+                exit 1
+              fi
+            fi
           else
-           echo "Branches have diverged. Attempting to rebase local changes onto origin/${BRANCH}..."
-          # 尝试基于远端 rebase，本步骤在冲突时会失败并退出（需要人工介入）
-          if git rebase origin/"$BRANCH"; then
-           echo "Rebase successful, pushing..."
-           git push origin HEAD:"$BRANCH"
-          else
-           echo "Rebase failed. Please resolve conflicts manually."
-           # 可根据情况选择重置并覆盖远端（不推荐），或者退出以等待人工处理
-           exit 1
-           fi
+            # Remote branch does not exist, push new branch
+            git push -u origin HEAD:"$BRANCH"
           fi
-          # Step 9: 压缩_worker.js为_worker.zip
-          - name: Compress _worker.js
-          if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
-          run: |
-           zip -j _worker.zip _worker.js
 
-      # Step 10: 创建并发布新的 GitHub Release
+      # Step 9: 压缩 _worker.js 为 _worker.zip
+      - name: Compress _worker.js
+        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
+        run: |
+          set -euo pipefail
+          if [ ! -f _worker.js ]; then
+            echo "_worker.js not found"
+            exit 1
+          fi
+          zip -j _worker.zip _worker.js
+
+      # Step 10: 创建并发布新的 GitHub Release（pre-release）并上传资产
       - name: Create Pre-release and Upload _worker.js
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         uses: softprops/action-gh-release@v2
@@ -152,6 +211,7 @@ jobs:
           NIGHTLY_BRANCH: ${{ steps.check_nightly_branch.outputs.NIGHTLY_BRANCH }}
           RANDOM_NUMBER: ${{ steps.obfuscate_js_code.outputs.RANDOM_NUMBER }}
           LATEST_COMMIT_ID: ${{ steps.check_nightly_branch.outputs.LATEST_COMMIT_ID }}
+          TARGET_REPO: ${{ env.TARGET_REPO }}
         with:
           name: "nightly-${{ env.RANDOM_NUMBER }}"
           files: |
