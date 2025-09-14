@@ -100,19 +100,48 @@ jobs:
           RANDOM_NUMBER: ${{ steps.obfuscate_js_code.outputs.RANDOM_NUMBER }}
         working-directory: ${{ github.workspace }}
         run: |
+          set -euo pipefail
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git config pull.ff only
-          git checkout -b $NIGHTLY_BRANCH
-          git add _worker.js
-          git commit -m "Update _worker.js with the latest obfuscated version: $RANDOM_NUMBER"
-          git pull origin $NIGHTLY_BRANCH
 
-      # Step 9: 压缩_worker.js为_worker.zip
-      - name: Compress _worker.js
-        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
-        run: |
-          zip -j _worker.zip _worker.js
+          # 分支名来自环境变量 NIGHTLY_BRANCH
+          BRANCH="${NIGHTLY_BRANCH:?NIGHTLY_BRANCH not set}"
+
+          # 创建并切换到本地分支
+          git checkout -b "$BRANCH"
+
+          # 添加并提交变更（允许无变更的情况）
+          git add _worker.js || true
+          if git diff --cached --quiet; then
+           echo "No staged changes to commit."
+          else
+            git commit -m "Update _worker.js with the latest obfuscated version: ${RANDOM_NUMBER:-unknown}"
+          fi
+
+          # 确保对远端进行 fetch
+          git fetch origin "$BRANCH"
+
+          # 如果可以 fast-forward（即远端包含本地的祖先），直接 push
+          if git merge-base --is-ancestor origin/"$BRANCH" HEAD; then
+           echo "Local branch is ahead of origin, pushing..."
+           git push origin HEAD:"$BRANCH"
+          else
+           echo "Branches have diverged. Attempting to rebase local changes onto origin/${BRANCH}..."
+          # 尝试基于远端 rebase，本步骤在冲突时会失败并退出（需要人工介入）
+          if git rebase origin/"$BRANCH"; then
+           echo "Rebase successful, pushing..."
+           git push origin HEAD:"$BRANCH"
+          else
+           echo "Rebase failed. Please resolve conflicts manually."
+           # 可根据情况选择重置并覆盖远端（不推荐），或者退出以等待人工处理
+           exit 1
+           fi
+          fi
+          # Step 9: 压缩_worker.js为_worker.zip
+          - name: Compress _worker.js
+          if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
+          run: |
+           zip -j _worker.zip _worker.js
 
       # Step 10: 创建并发布新的 GitHub Release
       - name: Create Pre-release and Upload _worker.js
