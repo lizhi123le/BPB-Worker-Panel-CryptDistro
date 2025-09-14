@@ -23,5 +23,5 @@
   ignoreRequireImports: true,
   domainLock: [],
   sourceMap: false,
-  sourceMapMode: 'separate',
+  sourceMapMode: 'separate'
 }
