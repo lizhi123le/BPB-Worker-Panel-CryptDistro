@@ -17,7 +17,7 @@
   "unicodeEscapeSequence": true,
   "selfDefending": true,
   "disableConsoleOutput": true,
-  "target": "browser",
+  "target": "browser-no-eval",
   "numbersToExpressions": true,
   "simplify": true,
   "ignoreRequireImports": true,
