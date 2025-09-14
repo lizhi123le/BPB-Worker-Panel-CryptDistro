@@ -176,6 +176,19 @@ jobs:
             git push origin --delete "refs/tags/${{ env.NIGHTLY_BRANCH }}" || echo "Tag deletion failed, proceeding."
           } || echo "No existing tag found, proceeding."
 
+          # Fetch remote branch
+          git fetch origin "${NIGHTLY_BRANCH}" || true
+
+          # Reset to remote branch if it exists, otherwise start fresh
+          if git show-ref --verify --quiet "refs/remotes/origin/${NIGHTLY_BRANCH}"; then
+            echo "Remote branch exists, resetting to origin/${NIGHTLY_BRANCH}..."
+            git checkout "${NIGHTLY_BRANCH}" || git checkout -b "${NIGHTLY_BRANCH}"
+            git reset --hard "origin/${NIGHTLY_BRANCH}"
+          else
+            echo "Remote branch does not exist, creating new branch..."
+            git checkout -b "${NIGHTLY_BRANCH}"
+          fi
+
           # Stage _worker.js changes
           git add _worker.js || true
 
@@ -186,42 +199,9 @@ jobs:
             git commit -m "Update _worker.js with obfuscated version: ${RANDOM_NUMBER:-unknown} (commit ${{ env.LATEST_COMMIT_ID }})"
           fi
 
-          # Create or switch to NIGHTLY_BRANCH
-          if git show-ref --verify --quiet "refs/heads/${NIGHTLY_BRANCH}"; then
-            git checkout "${NIGHTLY_BRANCH}"
-          else
-            git checkout -b "${NIGHTLY_BRANCH}"
-          fi
-
-          # Stage and commit _worker.js again in case of changes after checkout
-          git add _worker.js || true
-          if git diff --cached --quiet; then
-            echo "No additional changes to commit after checkout."
-          else
-            git commit -m "Update _worker.js in ${{ env.NIGHTLY_BRANCH }}: ${RANDOM_NUMBER:-unknown} (commit ${{ env.LATEST_COMMIT_ID }})"
-          fi
-
-          # Fetch remote branch
-          git fetch origin "${NIGHTLY_BRANCH}" || true
-
           # Push to remote branch
-          if git show-ref --verify --quiet "refs/remotes/origin/${NIGHTLY_BRANCH}"; then
-            if git merge-base --is-ancestor "origin/${NIGHTLY_BRANCH}" HEAD; then
-              echo "Local branch is ahead of origin, pushing..."
-              git push origin "HEAD:refs/heads/${NIGHTLY_BRANCH}"
-            else
-              echo "Branches have diverged. Attempting to rebase onto origin/${NIGHTLY_BRANCH}..."
-              if git rebase "origin/${NIGHTLY_BRANCH}"; then
-                git push origin "HEAD:refs/heads/${NIGHTLY_BRANCH}" --force-with-lease
-              else
-                echo "Error: Rebase failed. Please resolve conflicts manually."
-                exit 1
-              fi
-            fi
-          else
-            echo "Remote branch does not exist, pushing new branch..."
-            git push -u origin "HEAD:refs/heads/${NIGHTLY_BRANCH}"
-          fi
+          echo "Pushing to ${NIGHTLY_BRANCH}..."
+          git push origin "HEAD:refs/heads/${NIGHTLY_BRANCH}" --force-with-lease
         shell: bash
 
       # Step 10: Compress _worker.js to _worker.zip
