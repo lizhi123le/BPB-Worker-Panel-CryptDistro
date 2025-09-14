@@ -75,21 +75,15 @@ jobs:
       # Step 6: 混淆代码
       - name: Obfuscate worker with random seed
         run: |
-          set -euo pipefail
-          cd "${SOURCE_DIR}" || { echo "SOURCE_DIR not found: ${SOURCE_DIR}"; exit 1; }
-          pwd
-          ls -la
-          if [ ! -f obfuscator.json ]; then
-          echo "obfuscator.json not found in $(pwd). Please add it or set --config to correct path."
-          exit 1
-          fi
-          RANDOM_NUMBER=$(od -An -N8 -tu8 < /dev/urandom | awk '{print $1}')
-          echo "RANDOM_NUMBER=${RANDOM_NUMBER}" >> "$GITHUB_ENV"
-          echo "RANDOM_NUMBER=${RANDOM_NUMBER}" >> "$GITHUB_OUTPUT"
-          npx javascript-obfuscator dist/worker.js \
-           --output dist/worker.obfuscated.js \
-           --seed "${RANDOM_NUMBER}" \
-           --config obfuscator.json
+         set -euo pipefail
+         RANDOM_NUMBER=$(od -An -N8 -tu8 < /dev/urandom | awk '{print $1}')
+         echo "RANDOM_NUMBER=${RANDOM_NUMBER}" >> "$GITHUB_ENV"
+         echo "RANDOM_NUMBER=${RANDOM_NUMBER}" >> "$GITHUB_OUTPUT"
+         npx javascript-obfuscator dist/worker.js \
+         --output dist/worker.obfuscated.js \
+         --seed "${RANDOM_NUMBER}" \
+         --config obfuscator.json
+        shell: bash
       
       # Step 7: 复制文件并替换 _worker.js
       - name: Replace _worker.js
