@@ -2,8 +2,8 @@ name: Check Updates and Deploy with Obfuscation
 
 on:
   schedule:
-    - cron: '0 */3 * * *' # 每天定时运行
-  workflow_dispatch: # 手动触发
+    - cron: '0 */3 * * *' # Run every 3 hours
+  workflow_dispatch: # Manual trigger
 
 env:
   TARGET_REPO: lizhi123le/BPB-Worker-Panel
@@ -16,25 +16,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Step 1: 检查目标仓库 releases 是否需要更新
+      # Step 1: Check for updates in releases
       - name: Check for Updates in Releases
         id: check_update
         run: |
           set -e
-          # 获取目标仓库最新的 release 名称 # 并提取出版本号
+          # Get the latest release name and extract version number
           LATEST_RELEASE=$(curl -s https://api.github.com/repos/$TARGET_REPO/releases/latest | jq -r '.name')
           echo "Latest release from $TARGET_REPO: $LATEST_RELEASE"
 
-          VERSION=$(echo "$LATEST_RELEASE" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          VERSION=$(echo "$LATEST_RELEASE" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "null")
           echo "Parsed version: $VERSION"
 
-          echo "::set-output name=LATEST_RELEASE::$VERSION"
+          echo "LATEST_RELEASE=$VERSION" >> $GITHUB_ENV
 
-          # 检查当前仓库的最新 release
-          CURRENT_RELEASE=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.name')
+          # Check current repository's latest release
+          CURRENT_RELEASE=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.name' || echo "null")
           echo "Current release in this repo: $CURRENT_RELEASE"
-          
-          # 判断是否需要更新
+
+          # Determine if an update is needed
           if [ "$VERSION" = "null" ]; then
             echo "Error: No releases found in $TARGET_REPO"
             echo "has_update=true" >> $GITHUB_ENV
@@ -46,155 +46,160 @@ jobs:
             echo "has_update=false" >> $GITHUB_ENV
           fi
 
-      # Step 2: 下载目标仓库最新的 Source code 并解压
+      # Step 2: Download and extract latest source code
       - name: Download and Extract Latest Source Code
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         run: |
-          # 下载最新 release 的 Source code ZIP 文件
+          # Download latest release source code ZIP
           LATEST_RELEASE_ZIP_URL=$(curl -s https://api.github.com/repos/$TARGET_REPO/releases/latest | jq -r '.zipball_url')
           echo "Downloading source code from: $LATEST_RELEASE_ZIP_URL"
           
           curl -L $LATEST_RELEASE_ZIP_URL -o latest_source.zip
           
-          # 解压 ZIP 文件到当前目录
+          # Extract ZIP file
           unzip -o latest_source.zip -d latest_source
           echo "Source code extracted to: latest_source/"
 
-          # 获取解压后的目录名称（动态获取第一层子目录名）
+          # Get extracted directory name dynamically
           SOURCE_DIR=$(find latest_source -mindepth 1 -maxdepth 1 -type d)
           echo "Extracted source directory: $SOURCE_DIR"
 
-          # 将动态目录名称存入环境变量，供后续步骤使用
           echo "SOURCE_DIR=$SOURCE_DIR" >> $GITHUB_ENV
 
-      # Step 3: 安装源代码的必要依赖
-      - name: Install Dependencies
+      # Step 3: Install source code dependencies
+      - name: Install Source Dependencies
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         working-directory: ${{ env.SOURCE_DIR }}
         run: |
           npm install
 
-      # Step 4: 安装当前仓库的必要依赖
-      - name: Install Dependencies
+      # Step 4: Install repository dependencies
+      - name: Install Repository Dependencies
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         working-directory: ${{ github.workspace }}
         run: |
           npm install
 
-      # Step 5: 拉取代码并部署（仅在有更新时执行）
+      # Step 5: Build and deploy (dry run)
       - name: Build and Deploy
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         run: |
           npx wrangler deploy ${{ env.SOURCE_DIR }}/src/worker.js \
             --name bpb-worker-panel \
-            --compatibility-flag [nodejs_compat] \
+            --compatibility-flag nodejs_compat \
             --compatibility-date 2024-10-26 \
             --dry-run \
             --outdir=dist
 
-      # Step 6: 混淆代码
-      # --debug-protection true \
-      # --self-defending true \
-      # --disable-console-output true \
+      # Step 6: Obfuscate JavaScript code
       - name: Obfuscate JavaScript Code
         id: obfuscate_js_code
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         run: |
-         set -euo pipefail
-         RANDOM_NUMBER=$(od -An -N8 -tu8 < /dev/urandom | awk '{print $1}')
-         echo "RANDOM_NUMBER=${RANDOM_NUMBER}" >> "$GITHUB_ENV"
-         echo "RANDOM_NUMBER=${RANDOM_NUMBER}" >> "$GITHUB_OUTPUT"
-         npx javascript-obfuscator dist/worker.js \
-         --output dist/worker.obfuscated.js \
-         --seed "${RANDOM_NUMBER}" \
-         --config obfuscator.json
+          set -euo pipefail
+          RANDOM_NUMBER=$(od -An -N8 -tu8 < /dev/urandom | awk '{print $1}')
+          echo "RANDOM_NUMBER=$RANDOM_NUMBER" >> $GITHUB_ENV
+          echo "RANDOM_NUMBER=$RANDOM_NUMBER" >> $GITHUB_OUTPUT
+          npx javascript-obfuscator dist/worker.js \
+            --output dist/worker.obfuscated.js \
+            --seed "$RANDOM_NUMBER" \
+            --config obfuscator.json
         shell: bash
 
-      # Step 7: 添加运行时加密
-      # - name: Add Runtime Encryption
-      #   if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
-      #   run: |
-      #     echo "(function(){const decodedCode=atob(\`$(base64 dist/worker.obfuscated.js)\`);eval(decodedCode)})();" > dist/worker.encrypted.js
-
-      # Step 8: 复制文件并替换 _worker.js
+      # Step 7: Replace _worker.js
       - name: Replace _worker.js
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         run: |
           cp dist/worker.obfuscated.js _worker.js
 
-      # Step 9: 提交 _worker.js 到仓库
+      # Step 8: Check if release exists for the version
+      - name: Check if Release Exists
+        id: check_release
+        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
+        run: |
+          # Check if a release with the same version exists
+          RELEASE_EXISTS=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/${{ github.repository }}/releases | \
+            jq -r --arg version "${{ env.LATEST_RELEASE }}" '.[] | select(.name == $version) | .id' || echo "none")
+          echo "Release exists: $RELEASE_EXISTS"
+          echo "release_id=$RELEASE_EXISTS" >> $GITHUB_ENV
+
+      # Step 9: Commit and push changes
       - name: Commit and Push Changes
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          LATEST_RELEASE: ${{ steps.check_update.outputs.LATEST_RELEASE }}
-          RANDOM_NUMBER: ${{ steps.obfuscate_js_code.outputs.RANDOM_NUMBER }}
         working-directory: ${{ github.workspace }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add _worker.js
-          git commit -m "Update _worker.js with the latest obfuscated and encrypted version: $LATEST_RELEASE($RANDOM_NUMBER)" || echo "No changes to commit"
+          if [ "${{ env.release_id }}" != "none" ]; then
+            COMMIT_MESSAGE="Update _worker.js for existing release: ${{ env.LATEST_RELEASE }}(${{ env.RANDOM_NUMBER }})"
+          else
+            COMMIT_MESSAGE="Add _worker.js for new release: ${{ env.LATEST_RELEASE }}(${{ env.RANDOM_NUMBER }})"
+          fi
+          git commit -m "$COMMIT_MESSAGE" || echo "No changes to commit"
           git push origin main
 
-      # Step 10: 压缩_worker.js为_worker.zip
+      # Step 10: Compress _worker.js to _worker.zip
       - name: Compress _worker.js
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         run: |
           zip -j _worker.zip _worker.js
 
-      # Step 11: 创建并发布新的 GitHub Release
-      - name: Create Release and Upload _worker.js
+      # Step 11: Delete existing release if it exists
+      - name: Delete Existing Release
+        if: github.event_name == 'workflow_dispatch' || (env.has_update == 'true' && env.release_id != 'none')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Deleting existing release with ID: ${{ env.release_id }}"
+          curl -s -X DELETE \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/${{ github.repository }}/releases/${{ env.release_id }}
+
+      # Step 12: Delete existing tag if it exists
+      - name: Delete Existing Tag
+        if: github.event_name == 'workflow_dispatch' || (env.has_update == 'true' && env.release_id != 'none')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="release-${{ env.LATEST_RELEASE }}(${{ env.RANDOM_NUMBER }})"
+          echo "Deleting existing tag: $TAG_NAME"
+          git push origin --delete $TAG_NAME || echo "Tag does not exist, proceeding"
+
+      # Step 13: Create or update release and upload assets
+      - name: Create or Update Release and Upload Assets
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          LATEST_RELEASE: ${{ steps.check_update.outputs.LATEST_RELEASE }}
-          RANDOM_NUMBER: ${{ steps.obfuscate_js_code.outputs.RANDOM_NUMBER }}
         with:
           name: "${{ env.LATEST_RELEASE }}"
           files: |
             _worker.js
             _worker.zip
           tag_name: "release-${{ env.LATEST_RELEASE }}(${{ env.RANDOM_NUMBER }})"
-          body: "This release includes the latest obfuscated and encrypted _worker.js. Release based on ${{ env.TARGET_REPO }} - version: ${{ env.LATEST_RELEASE }}"
+          body: "This release includes the latest obfuscated _worker.js. Based on ${{ env.TARGET_REPO }} - version: ${{ env.LATEST_RELEASE }}"
 
-      # Step 12: 将解压后的源代码推送到指定分支, 用于备份
+      # Step 14: Push extracted source code to a backup branch
       - name: Push Extracted Source Code
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          LATEST_RELEASE: ${{ steps.check_update.outputs.LATEST_RELEASE }}
-          RANDOM_NUMBER: ${{ steps.obfuscate_js_code.outputs.RANDOM_NUMBER }}
         run: |
-          # 创建一个新文件夹
           mkdir new_repo
           cd new_repo
-          
-          # 初始化一个新的Git仓库
           git init
-
-          # 配置 Git 用户信息
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # 创建并切换到指定分支
           BRANCH_NAME="${{ env.LATEST_RELEASE }}-${{ env.RANDOM_NUMBER }}"
           git checkout -b "$BRANCH_NAME"
-
-          # 复制下载的latest_source.zip，并解压到临时文件夹
           unzip ../latest_source.zip -d ../latest_source_temp
           SOURCE_DIR=$(find ../latest_source_temp -mindepth 1 -maxdepth 1 -type d)
-
-          # 复制解压后的源代码到仓库目录
           cp -r $SOURCE_DIR/* .
-
-          # 添加远程仓库
           git remote add origin https://x-access-token:${{ env.GITHUB_TOKEN }}@github.com/${{ github.repository }}
-
-          # 提交更改
           git add .
-          git commit -m "Backup latest source code from $TARGET_REPO: $LATEST_RELEASE($RANDOM_NUMBER)"
-      
-          # 推送到指定分支
+          git commit -m "Backup source code from ${{ env.TARGET_REPO }}: ${{ env.LATEST_RELEASE }}(${{ env.RANDOM_NUMBER }})"
           git push -u origin "$BRANCH_NAME"
