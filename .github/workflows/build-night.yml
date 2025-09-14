@@ -136,60 +136,69 @@ jobs:
           cp dist/worker.obfuscated.js _worker.js
           echo "_worker.js prepared."
 
-      # Step 8: 提交 _worker.js 到夜间分支并推送
-      - name: Commit and Push to Nightly Branch
-        if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NIGHTLY_BRANCH: ${{ steps.check_nightly_branch.outputs.NIGHTLY_BRANCH }}
-          RANDOM_NUMBER: ${{ steps.obfuscate_js_code.outputs.RANDOM_NUMBER }}
-        working-directory: ${{ github.workspace }}
-        run: |
-          set -euo pipefail
+# Step 8: Commit and Push _worker.js to NIGHTLY_BRANCH
+- name: Commit and Push _worker.js to Nightly Branch
+  if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    NIGHTLY_BRANCH: "night-${{ github.sha }}"
+    RANDOM_NUMBER: ${{ steps.obfuscate_js_code.outputs.RANDOM_NUMBER }}
+  run: |
+    set -euo pipefail
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+    git config user.name "github-actions[bot]"
+    git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          BRANCH="${NIGHTLY_BRANCH:?NIGHTLY_BRANCH not set}"
+    # Ensure origin remote is set
+    git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
 
-          # Ensure we have origin remote
-          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+    # Stage _worker.js changes
+    git add _worker.js || true
 
-          # Create and switch to branch
-          if git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
-            git checkout "$BRANCH"
-          else
-            git checkout -b "$BRANCH"
-          fi
+    # Commit changes if any exist
+    if git diff --cached --quiet; then
+      echo "No staged changes to commit."
+    else
+      git commit -m "Update _worker.js with the latest obfuscated version: ${RANDOM_NUMBER:-unknown}"
+    fi
 
-          # Add and commit (allow no changes)
-          git add _worker.js || true
-          if git diff --cached --quiet; then
-            echo "No staged changes to commit."
-          else
-            git commit -m "Update _worker.js with the latest obfuscated version: ${RANDOM_NUMBER:-unknown}"
-          fi
+    # Create or switch to NIGHTLY_BRANCH
+    if git rev-parse --verify "$NIGHTLY_BRANCH" >/dev/null 2>&1; then
+      git checkout "$NIGHTLY_BRANCH"
+    else
+      git checkout -b "$NIGHTLY_BRANCH"
+    fi
 
-          # Fetch remote branch and attempt fast-forward or rebase
-          git fetch origin "$BRANCH" || true
+    # Stage and commit _worker.js again in case of new changes after checkout
+    git add _worker.js || true
+    if git diff --cached --quiet; then
+      echo "No additional changes to commit after checkout."
+    else
+      git commit -m "Update _worker.js in $NIGHTLY_BRANCH: ${RANDOM_NUMBER:-unknown}"
+    fi
 
-          if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
-            if git merge-base --is-ancestor origin/"$BRANCH" HEAD; then
-              echo "Local is ahead of origin, pushing..."
-              git push origin HEAD:"$BRANCH"
-            else
-              echo "Branches have diverged. Attempting to rebase onto origin/$BRANCH..."
-              if git rebase origin/"$BRANCH"; then
-                git push origin HEAD:"$BRANCH"
-              else
-                echo "Rebase failed. Please resolve conflicts manually."
-                exit 1
-              fi
-            fi
-          else
-            # Remote branch does not exist, push new branch
-            git push -u origin HEAD:"$BRANCH"
-          fi
+    # Fetch remote branch
+    git fetch origin "$NIGHTLY_BRANCH" || true
+
+    # Push to remote branch
+    if git rev-parse --verify "origin/$NIGHTLY_BRANCH" >/dev/null 2>&1; then
+      if git merge-base --is-ancestor origin/"$NIGHTLY_BRANCH" HEAD; then
+        echo "Local is ahead of origin, pushing..."
+        git push origin HEAD:"$NIGHTLY_BRANCH"
+      else
+        echo "Branches have diverged. Attempting to rebase onto origin/$NIGHTLY_BRANCH..."
+        if git rebase origin/"$NIGHTLY_BRANCH"; then
+          git push origin HEAD:"$NIGHTLY_BRANCH"
+        else
+          echo "Rebase failed. Please resolve conflicts manually."
+          exit 1
+        fi
+      fi
+    else
+      # Remote branch does not exist, push new branch
+      git push -u origin HEAD:"$NIGHTLY_BRANCH"
+    fi
+  shell: bash
 
       # Step 9: 压缩 _worker.js 为 _worker.zip
       - name: Compress _worker.js
