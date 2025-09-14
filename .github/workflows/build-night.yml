@@ -152,7 +152,7 @@ jobs:
           cp dist/worker.obfuscated.js _worker.js
           echo "_worker.js replaced with obfuscated version."
 
-      # Step 9: Commit and push _worker.js to nightly branch
+      # Step 9: Commit and Push _worker.js to Nightly Branch
       - name: Commit and Push _worker.js to Nightly Branch
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         env:
@@ -169,6 +169,13 @@ jobs:
           # Ensure origin remote is set
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
 
+          # Delete existing tag if it exists to avoid refspec ambiguity
+          echo "Checking for existing tag: ${{ env.NIGHTLY_BRANCH }}"
+          git ls-remote --tags origin "${{ env.NIGHTLY_BRANCH }}" | grep -q "${{ env.NIGHTLY_BRANCH }}" && {
+            echo "Deleting existing tag: ${{ env.NIGHTLY_BRANCH }}"
+            git push origin --delete "refs/tags/${{ env.NIGHTLY_BRANCH }}" || echo "Tag deletion failed, proceeding."
+          } || echo "No existing tag found, proceeding."
+
           # Stage _worker.js changes
           git add _worker.js || true
 
@@ -180,10 +187,10 @@ jobs:
           fi
 
           # Create or switch to NIGHTLY_BRANCH
-          if git rev-parse --verify "$NIGHTLY_BRANCH" >/dev/null 2>&1; then
-            git checkout "$NIGHTLY_BRANCH"
+          if git show-ref --verify --quiet "refs/heads/${NIGHTLY_BRANCH}"; then
+            git checkout "${NIGHTLY_BRANCH}"
           else
-            git checkout -b "$NIGHTLY_BRANCH"
+            git checkout -b "${NIGHTLY_BRANCH}"
           fi
 
           # Stage and commit _worker.js again in case of changes after checkout
@@ -191,21 +198,21 @@ jobs:
           if git diff --cached --quiet; then
             echo "No additional changes to commit after checkout."
           else
-            git commit -m "Update _worker.js in $NIGHTLY_BRANCH: ${RANDOM_NUMBER:-unknown} (commit ${{ env.LATEST_COMMIT_ID }})"
+            git commit -m "Update _worker.js in ${{ env.NIGHTLY_BRANCH }}: ${RANDOM_NUMBER:-unknown} (commit ${{ env.LATEST_COMMIT_ID }})"
           fi
 
           # Fetch remote branch
-          git fetch origin "$NIGHTLY_BRANCH" || true
+          git fetch origin "${NIGHTLY_BRANCH}" || true
 
           # Push to remote branch
-          if git rev-parse --verify "origin/$NIGHTLY_BRANCH" >/dev/null 2>&1; then
-            if git merge-base --is-ancestor origin/"$NIGHTLY_BRANCH" HEAD; then
-              echo "Local is ahead of origin, pushing..."
-              git push origin HEAD:"$NIGHTLY_BRANCH"
+          if git show-ref --verify --quiet "refs/remotes/origin/${NIGHTLY_BRANCH}"; then
+            if git merge-base --is-ancestor "origin/${NIGHTLY_BRANCH}" HEAD; then
+              echo "Local branch is ahead of origin, pushing..."
+              git push origin "HEAD:refs/heads/${NIGHTLY_BRANCH}"
             else
-              echo "Branches have diverged. Attempting to rebase onto origin/$NIGHTLY_BRANCH..."
-              if git rebase origin/"$NIGHTLY_BRANCH"; then
-                git push origin HEAD:"$NIGHTLY_BRANCH"
+              echo "Branches have diverged. Attempting to rebase onto origin/${NIGHTLY_BRANCH}..."
+              if git rebase "origin/${NIGHTLY_BRANCH}"; then
+                git push origin "HEAD:refs/heads/${NIGHTLY_BRANCH}" --force-with-lease
               else
                 echo "Error: Rebase failed. Please resolve conflicts manually."
                 exit 1
@@ -213,7 +220,7 @@ jobs:
             fi
           else
             echo "Remote branch does not exist, pushing new branch..."
-            git push -u origin HEAD:"$NIGHTLY_BRANCH"
+            git push -u origin "HEAD:refs/heads/${NIGHTLY_BRANCH}"
           fi
         shell: bash
 
@@ -257,18 +264,7 @@ jobs:
             -H "Authorization: Bearer ${{ env.GITHUB_TOKEN }}" \
             https://api.github.com/repos/${{ github.repository }}/releases/${{ steps.check_release.outputs.release_id }}
 
-      # Step 13: Delete existing tag if it exists
-      - name: Delete Existing Tag
-        if: github.event_name == 'workflow_dispatch' || (env.has_update == 'true' && steps.check_release.outputs.release_id != 'none')
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NIGHTLY_BRANCH: ${{ steps.check_nightly_branch.outputs.NIGHTLY_BRANCH }}
-        run: |
-          set -euo pipefail
-          echo "Deleting existing tag: ${{ env.NIGHTLY_BRANCH }}"
-          git push origin --delete "${{ env.NIGHTLY_BRANCH }}" || echo "Tag does not exist, proceeding."
-
-      # Step 14: Create pre-release and upload assets
+      # Step 13: Create pre-release and upload assets
       - name: Create Pre-release and Upload Assets
         if: github.event_name == 'workflow_dispatch' || env.has_update == 'true'
         uses: softprops/action-gh-release@v2
